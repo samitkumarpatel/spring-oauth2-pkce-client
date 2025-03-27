@@ -37,6 +37,8 @@
     <script src="https://unpkg.com/vue-router@4"></script>
     <script src="https://unpkg.com/vuex@4"></script>
     <script src="oauth2-util.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
 
     <script>
         const redirectURI = 'http://127.0.0.1:3000';
@@ -61,7 +63,23 @@
         })
 
         //Components
-        const About = { template: '<div>About</div>' }
+        const About = {
+            setup() {
+                const socket = new SockJS('http://localhost:8081/stomp-endpoint');
+                const stompClient = Stomp.over(socket);
+                const accessToken = localStorage.getItem('access_token');
+                stompClient.connect({'Authorization': 'Bearer ' + accessToken}, (frame) => {
+                    console.log("Connected: " + frame);
+                    
+                    stompClient.subscribe('/topic/public', (message) => {
+                        console.log("Received:", message.body);
+                    });
+
+                    stompClient.send("/app/chat", {}, JSON.stringify("Hello!"));
+                });
+            },
+            template: '<div>About</div>' 
+        }
         const Dashboard = { template: '<div>Dashboard</div>' }
         const Home = {
             setup() {
