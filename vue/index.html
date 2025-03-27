@@ -103,6 +103,7 @@
                             return response.json();
                         })
                         .then(data => {
+                            console.log(data);
                             const accessToken = data.access_token;
                             localStorage.setItem('access_token', accessToken);
                             

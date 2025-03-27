@@ -48,11 +48,14 @@
                 generateCodeChallengeFromVerifier(codeVerifier)
                     .then(codeChallenge => {
                         localStorage.setItem("pkace", JSON.stringify({ codeVerifier, codeChallenge }));
-                        window.location.replace(`${oidcClient.authorizationServer}/oauth2/authorize?response_type=code&client_id=${oidcClient.clientId}&scope=${oidcClient.scope}&code_challenge=${codeChallenge}&code_challenge_method=S256&code_verifier=${codeVerifier}&redirect_uri=${oidcClient.redirectUri}`);
+                        profileElement.innerHTML = `<p>Redirecting, Please Wait ...</p>`;
+                        setInterval(()=> {
+                            window.location.replace(`${oidcClient.authorizationServer}/oauth2/authorize?response_type=code&client_id=${oidcClient.clientId}&scope=${oidcClient.scope}&code_challenge=${codeChallenge}&code_challenge_method=S256&code_verifier=${codeVerifier}&redirect_uri=${oidcClient.redirectUri}`);
+                        }, 1500);
                     });
             });
 
-            if (location.search.includes("code=") || location.search.includes("error=")) {
+            if (location.search.includes("code=")) {
                 
                     const urlParams = new URLSearchParams(window.location.search);
                     const code = urlParams.get('code');
@@ -83,9 +86,12 @@
                             })
                             .then(data => {
                                 const accessToken = data.access_token;
-                                localStorage.setItem('access_token', accessToken);                                
-                                window.history.replaceState({}, document.title, "/");
-                                authsuccess();
+                                localStorage.setItem('access_token', accessToken);
+                                profileElement.innerHTML = `<p>Processing...</p>`;
+                                setInterval(()=> {
+                                    window.history.replaceState({}, document.title, "/");
+                                    authsuccess();
+                                }, 1500);
                             })
                             .catch(error => {
                                 console.error('Failed to obtain access token:', error);
