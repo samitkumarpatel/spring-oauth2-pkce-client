@@ -22,67 +22,87 @@
         <div id="profile"></div>
 
         <script src="https://cdn.auth0.com/js/auth0-spa-js/2.0/auth0-spa-js.production.js"></script>
+        <script src="oauth2-util.js"></script>
         <script>
-            auth0.createAuth0Client({
-                domain: "http://localhost:9000/oauth2",
+            const oidcClient = {
+                authorizationServer: "http://localhost:9000",
                 clientId: "public-client",
-                authorizationParams: {
-                    redirect_uri: "http://127.0.0.1:3000"
-                },
-                cacheLocation: "localstorage",
-                useRefreshTokens: true,
-                advancedOptions: {
-                    defaultScope: "openid profile email offline_access"
-                },
-                scope: "openid profile email offline_access"
-            }).then(async (auth0Client) => {
-                // Assumes a button with id "login" in the DOM
-                const loginButton = document.getElementById("login");
+                redirectUri: "http://127.0.0.1:3000",
+                scope: "profile",
+            }
 
-                loginButton.addEventListener("click", (e) => {
-                    e.preventDefault();
-                    auth0Client.loginWithRedirect();
-
-                });
-
-
-                if (location.search.includes("state=") &&
-                    (location.search.includes("code=") ||
-                        location.search.includes("error="))) {
-                    //await auth0Client.handleRedirectCallback();
-                    //fetch the code= value and print it in the screen
-
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const code = urlParams.get('code');
-                    console.log(`Code: ${code}`);
-                    const isAuthenticated = await auth0Client.isAuthenticated();
-                    console.log(`isAuthenticated = ${isAuthenticated}`)
-                    console.log(`auth0Client ${JSON.parse(auth0Client)}`)
-                    window.history.replaceState({}, document.title, "/");
-                }
-
-                // Assumes a button with id "logout" in the DOM
-                const logoutButton = document.getElementById("logout");
-                logoutButton.addEventListener("click", (e) => {
-                    e.preventDefault();
-                    auth0Client.logout();
-                });
-
-
-                //const userProfile = await auth0Client.getUser();
-
-                // Assumes an element with id "profile" in the DOM
-                const profileElement = document.getElementById("profile");
-
-                if (false) {
+            const profileElement = document.getElementById("profile");
+            function authsuccess() {
+                if (localStorage.getItem("access_token")) {
                     profileElement.style.display = "block";
-                    profileElement.innerHTML = `
-                        <p>Authentication Successful</p>
-                      `;
+                    profileElement.innerHTML = `<p>Authentication Successful</p>`;
                 } else {
                     profileElement.style.display = "none";
                 }
+            }
+
+            const loginButton = document.getElementById("login");
+            loginButton.addEventListener("click", (e) => {
+                e.preventDefault();
+                const codeVerifier = generateCodeVerifier();
+                generateCodeChallengeFromVerifier(codeVerifier)
+                    .then(codeChallenge => {
+                        localStorage.setItem("pkace", JSON.stringify({ codeVerifier, codeChallenge }));
+                        window.location.replace(`${oidcClient.authorizationServer}/oauth2/authorize?response_type=code&client_id=${oidcClient.clientId}&scope=${oidcClient.scope}&code_challenge=${codeChallenge}&code_challenge_method=S256&code_verifier=${codeVerifier}&redirect_uri=${oidcClient.redirectUri}`);
+                    });
             });
+
+            if (location.search.includes("code=") || location.search.includes("error=")) {
+                
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const code = urlParams.get('code');
+                    console.log(`Code: ${code}`);
+                    
+                    //fetch token and store it in localstorage with key access_token
+                    const pkace = JSON.parse(localStorage.getItem("pkace"));
+                    if (code && pkace) {
+                        const formData = new URLSearchParams();
+                        formData.append('client_id', oidcClient.clientId);
+                        formData.append('grant_type', 'authorization_code');
+                        formData.append('code', code);
+                        formData.append('code_challenge', pkace['codeChallenge']);
+                        formData.append('code_verifier', pkace['codeVerifier']);
+                        formData.append('code_challenge_method', 'S256');
+                        formData.append('redirect_uri', oidcClient.redirectUri);
+
+                        fetch(`${oidcClient.authorizationServer}/oauth2/token`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded'},
+                            body: formData
+                        })
+                            .then(response => {
+                                if (!response.ok) {
+                                    throw new Error('Failed to obtain access token');
+                                }
+                                return response.json();
+                            })
+                            .then(data => {
+                                const accessToken = data.access_token;
+                                localStorage.setItem('access_token', accessToken);                                
+                                window.history.replaceState({}, document.title, "/");
+                                authsuccess();
+                            })
+                            .catch(error => {
+                                console.error('Failed to obtain access token:', error);
+                            });
+                    }
+            }
+
+            // Assumes a button with id "logout" in the DOM
+            const logoutButton = document.getElementById("logout");
+            logoutButton.addEventListener("click", (e) => {
+                e.preventDefault();
+                localStorage.removeItem("pkace");
+                localStorage.removeItem("access_token");
+                window.location.replace(`${oidcClient.authorizationServer}/logout`);
+            });
+            
+            
         </script>
     </body>
 </html>
