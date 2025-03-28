@@ -19,7 +19,7 @@
         <header style="display: flex; gap: 10px; justify-content: space-between;">
             <div style="display: flex; gap: 20px;">
                 <router-link to="/">Home</router-link>
-                <router-link to="/about" v-if="$store.state.isLoggedIn">About</router-link>
+                <router-link to="/chat" v-if="$store.state.isLoggedIn">Chat</router-link>
             </div>
             <div>
                 <router-link to="/logout" v-if="$store.state.isLoggedIn">Logout</router-link>
@@ -63,7 +63,7 @@
         })
 
         //Components
-        const About = {
+        const Chat = {
             setup() {
                 const socket = new SockJS('http://localhost:8081/stomp-endpoint');
                 const stompClient = Stomp.over(socket);
@@ -72,11 +72,23 @@
                     console.log("Connected: " + frame);
                     
                     stompClient.subscribe('/topic/public', (message) => {
-                        console.log("Received:", message.body);
+                        console.log("PUBLIC MESSAGE:", message.body);
                     });
 
-                    stompClient.send("/app/chat", {}, JSON.stringify("Hello!"));
+                    stompClient.subscribe('/user/queue/private', (message) => {
+                        console.log("PRIVATE MESSAGE:", message.body);
+                    });
+
+                    stompClient.send("/app/chat", {}, JSON.stringify({message: "Hello!", to: "ALL"}));
+                    stompClient.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Bret"}));
+                }, (error) => {
+                    console.error('Failed to connect:', error);
                 });
+
+                // Handle connection closure
+                socket.onclose = (event) => {
+                    console.log(`Socket closed`, event);
+                };
             },
             template: '<div>About</div>' 
         }
@@ -137,9 +149,7 @@
                             error.value = error.message;
                             loading.value = false;
                             console.error('Failed to obtain access token:', error);
-                        });
-
-                    
+                        }); 
                 }
 
                 return {
@@ -163,12 +173,6 @@
                 const message = ref('Chose one to Login With: ')
                 const redirecting = ref(false);
                 function oauth2Login() {
-                    //const codeVerifier = generateCodeVerifier();
-                    // generateCodeChallengeFromVerifier(codeVerifier)
-                    //     .then(codeChallenge => {
-                    //         localStorage.setItem("pkace", JSON.stringify({ codeVerifier, codeChallenge }));
-                    //         window.location.href = `${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${codeChallenge}&code_challenge_method=S256&code_verifier=${codeVerifier}&redirect_uri=${redirectURI}`;
-                    //     })
                     
                     fetch(`${oauth2AuthServerURI}/public/pkce`)
                         .then(response => {
@@ -183,7 +187,7 @@
                             message.value = 'Redirecting to Spring oauth2 server, Please wait...';
                             redirecting.value = true;
                             setInterval(() => {
-                                window.location.replace(`${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${data.codeChallenge}&code_challenge_method=S256&code_verifier=${data.codeVerifier}&redirect_uri=${redirectURI}`);
+                                window.location.replace(`${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${data.codeChallenge}&code_challenge_method=S256&redirect_uri=${redirectURI}`);
                             }, 2000);
                             
                         })
@@ -211,7 +215,7 @@
 
         const routes = [
             { path: '/', component: Home },
-            { path: '/about', component: About },
+            { path: '/chat', component: Chat },
             { path: '/login', component: Login },
             { path: '/logout', component: {
                 setup() {
