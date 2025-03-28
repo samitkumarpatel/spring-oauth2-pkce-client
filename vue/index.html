@@ -11,6 +11,18 @@
             width: 50%;
             margin-top: 30px;
         }
+        .user {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 5px 0;
+        }
+        .user:hover {
+            background-color: #e0e0e0;
+        }
+        .user.selected {
+            background-color: #d0d0ff;
+        }
     </style>
 </head>
 <body>
@@ -26,13 +38,37 @@
                 <router-link to="/login" v-else>Login</router-link>
             </div>
         </header>
-        
-        
         <hr/>
         <router-view></router-view>
         <hr/>
     </div>
-
+    <template id="chat-template">
+        <div>
+            <p v-if="e" style="color: red;">{{ e }}</p>
+            <section v-if="selectedUser">
+                <div style="display: flex; flex-direction: column; background-color: lightgray; border-radius: 5px; padding: 5px;">
+                    <h3>{{ selectedUser.username }}</h3>
+                    <small>Email: {{ selectedUser.email }}</small><br/>
+                    <small>Phone: {{ selectedUser.phone }}</small>
+                    <p style="color: blue;" @click="selectedUser = null">back</p>
+                </div>
+                <hr/>
+                
+                <div style="display: flex; gap: 10px; flex-direction: column;">
+                    <p style="text-align: right;">right</p>
+                    <p style="text-align: left;">left</p>
+                </div>
+                <input type="text" placeholder="Type your message here..." style="width: 100%; height: 40px; padding: 10px; margin-top: 10px; border-radius: 5px; border: 1px solid #ccc;">
+                <hr/>
+            </section>
+            <ul v-else style="list-style-type: none; padding: 0;">
+                <li v-for="u in users">
+                    <p class="user" @click="selectedUser = u">{{u.username}}</p>
+                </li>
+            </ul>
+            
+        </div>
+    </template>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/vue-router@4"></script>
     <script src="https://unpkg.com/vuex@4"></script>
@@ -49,7 +85,7 @@
         const store = Vuex.createStore({
             state () {
                 return {
-                    isLoggedIn: false
+                    isLoggedIn: false || localStorage.getItem('access_token') ? true : false
                 }
             },
             mutations: {
@@ -65,34 +101,68 @@
         //Components
         const Chat = {
             setup() {
-                const socket = new SockJS('http://localhost:8081/stomp-endpoint');
-                const stompClient = Stomp.over(socket);
-                const accessToken = localStorage.getItem('access_token');
-                stompClient.connect({'Authorization': 'Bearer ' + accessToken}, (frame) => {
-                    console.log("Connected: " + frame);
-                    
-                    stompClient.subscribe('/topic/public', (message) => {
-                        console.log("PUBLIC MESSAGE:", message.body);
+                const users = ref([]);
+                const selectedUser = ref(null);
+                const whoAmI = ref(null);
+                const stompClient = ref(null);
+                const e = ref(null);
+                
+                const setSelecedUser = (user) => {
+                    selectedUser.value = user;
+                }
+                
+                const websocket = () => {
+                    const socket = new SockJS('http://localhost:8081/stomp-endpoint');
+                    stompClient.value = Stomp.over(socket);
+                    const accessToken = localStorage.getItem('access_token');
+                    stompClient.value.connect({'Authorization': 'Bearer ' + accessToken}, (frame) => {
+                        console.log("Connected: " + frame);
+                        
+                        stompClient.value.subscribe('/topic/public', (message) => {
+                            console.log("PUBLIC MESSAGE:", message.body);
+                        });
+
+                        stompClient.value.subscribe('/user/queue/private', (message) => {
+                            console.log("PRIVATE MESSAGE:", message.body);
+                        });
+
+                        stompClient.value.send("/app/chat", {}, JSON.stringify({message: "Hello!", to: "ALL"}));
+                        stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Bret"}));
+                    }, (error) => {
+                        console.error('Failed to connect:', error);
                     });
 
-                    stompClient.subscribe('/user/queue/private', (message) => {
-                        console.log("PRIVATE MESSAGE:", message.body);
-                    });
+                    // Handle connection closure
+                    socket.onclose = (event) => {
+                        console.log(`Socket closed`, event);
+                    };
+                }
 
-                    stompClient.send("/app/chat", {}, JSON.stringify({message: "Hello!", to: "ALL"}));
-                    stompClient.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Bret"}));
-                }, (error) => {
-                    console.error('Failed to connect:', error);
+                const fetchUsers = () => {
+                    fetch('https://jsonplaceholder.typicode.com/users')
+                        .then(response => response.json())
+                        .then(data => {
+                            users.value = data;
+                        })
+                        .then(() => {
+                            websocket();
+                        })
+                        .catch(error => {
+                            e.value = error;
+                            console.error('Error fetching users:', error);
+                        });
+                }
+                
+                onMounted(() => {
+                    fetchUsers();
                 });
 
-                // Handle connection closure
-                socket.onclose = (event) => {
-                    console.log(`Socket closed`, event);
+                return {
+                    users, selectedUser, whoAmI, e, setSelecedUser
                 };
             },
-            template: '<div>About</div>' 
+            template: '#chat-template' 
         }
-        const Dashboard = { template: '<div>Dashboard</div>' }
         const Home = {
             setup() {
                 const accessToken = localStorage.getItem('access_token');
@@ -214,10 +284,10 @@
         }
 
         const routes = [
-            { path: '/', component: Home },
-            { path: '/chat', component: Chat },
-            { path: '/login', component: Login },
-            { path: '/logout', component: {
+            { path: '/', name: 'Home', component: Home },
+            { path: '/chat', name: 'Chat', component: Chat },
+            { path: '/login', name: 'Login', component: Login },
+            { path: '/logout', name: 'Logout', component: {
                 setup() {
                     localStorage.removeItem('access_token');
                     localStorage.removeItem('pkace');
@@ -232,7 +302,20 @@
             routes,
         })
 
-        createApp({}).use(store).use(router).mount('#app')
+        router.beforeEach(async (to, from) => {
+            console.log('Navigating to:', to.name);
+            const isAuthenticated = store.state.isLoggedIn;
+            console.log('isAuthenticated:', isAuthenticated);
+            // if (to.name === 'Chat' && !isAuthenticated) {
+            //     console.log('Redirecting to login page');
+            //     return { name: 'Login' };
+            // }
+        })
+
+        createApp({})
+            .use(store)
+            .use(router)
+            .mount('#app')
     </script>
 </body>
 </html>
