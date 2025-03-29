@@ -23,6 +23,15 @@
         .user.selected {
             background-color: #d0d0ff;
         }
+        span {
+            margin-left: 10px;
+        }
+        span.avatar {
+            background-color: #ccc;
+            border-radius: 50%;
+            padding: 5px;
+            margin-right: 5px;
+        }
     </style>
 </head>
 <body>
@@ -40,7 +49,10 @@
         </header>
         <hr/>
         <router-view></router-view>
-        <hr/>
+        <footer style="text-align: right;margin-top: 20px;">
+            <hr/>
+            <small>&#169; all right reserved!</small>
+        </footer>
     </div>
     <template id="chat-template">
         <div>
@@ -54,12 +66,24 @@
                 </div>
                 <hr/>
                 
-                <div style="display: flex; gap: 10px; flex-direction: column;">
-                    <p style="text-align: right;">right</p>
-                    <p style="text-align: left;">left</p>
+                <div style="display: flex; gap: 5px; flex-direction: column; text-align: center; border: 1px solid #ccc; border-radius: 25px; padding: 50px;">
+                    <p style="text-align: right;">
+                        <span>incoming message</span>
+                        <span class="avatar">&#128100;</span>
+                    </p>
+                    <p style="text-align: left;">
+                        <span class="avatar">&#128100;</span>
+                        <span>message outcome</span>
+                    </p>
+                    <p style="text-align: left;"><span class="avatar">&#128100;</span><span>message outcome</span></p>
+                    <p style="text-align: left;"><span class="avatar">&#128100;</span><span>message outcome</span></p>
+                    <p style="text-align: right;"><span>incoming message</span><span class="avatar">&#128100;</span></p>
+                    <p style="text-align: right;"><span>incoming message</span><span class="avatar">&#128100;</span></p>
                 </div>
-                <input type="text" placeholder="Type your message here..." style="width: 100%; height: 40px; padding: 10px; margin-top: 10px; border-radius: 5px; border: 1px solid #ccc;">
-                <hr/>
+                <div style="display: flex; border: 1px solid #ccc; border-radius: 20px; width: 100%; padding: 30px;margin-top: 10px; text-align: center;">
+                    <input type="text" placeholder="Type your message here..." style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
+                    <button style="margin-left: 10px;">Send</button>
+                </div>
             </section>
             <ul v-else style="list-style-type: none; padding: 0;">
                 <li v-for="u in users">
