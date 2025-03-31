@@ -35,7 +35,7 @@
     </style>
 </head>
 <body>
-    <h3>Login With</h3>
+    <h3>Welcome!</h3>
     <div id="app">
         <header style="display: flex; gap: 10px; justify-content: space-between;">
             <div style="display: flex; gap: 20px;">
@@ -43,6 +43,7 @@
                 <router-link to="/chat" v-if="$store.state.isLoggedIn">Chat</router-link>
             </div>
             <div>
+                <p v-if="$store.state.isLoggedIn">Welcome {{ $store.state.me }}</p>
                 <router-link to="/logout" v-if="$store.state.isLoggedIn">Logout</router-link>
                 <router-link to="/login" v-else>Login</router-link>
             </div>
@@ -80,10 +81,11 @@
                     <p style="text-align: right;"><span>incoming message</span><span class="avatar">&#128100;</span></p>
                     <p style="text-align: right;"><span>incoming message</span><span class="avatar">&#128100;</span></p>
                 </div>
-                <div style="display: flex; border: 1px solid #ccc; border-radius: 20px; width: 100%; padding: 30px;margin-top: 10px; text-align: center;">
+                <form @submit.prevent="sendMessage()" style="display: flex; border: 1px solid #ccc; border-radius: 20px; width: 100%; padding: 30px;margin-top: 10px; text-align: center;">
                     <input type="text" placeholder="Type your message here..." style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
                     <button style="margin-left: 10px;">Send</button>
-                </div>
+                </form>
+                    
             </section>
             <ul v-else style="list-style-type: none; padding: 0;">
                 <li v-for="u in users">
@@ -94,8 +96,8 @@
         </div>
     </template>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://unpkg.com/vue-router@4"></script>
-    <script src="https://unpkg.com/vuex@4"></script>
+    <script src="./vue-libs/vue-router/dist/vue-router.global.js"></script>
+    <script src="./vue-libs/vuex/dist/vuex.global.js"></script>
     <script src="oauth2-util.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
@@ -103,18 +105,21 @@
     <script>
         const redirectURI = 'http://127.0.0.1:3000';
         const oauth2AuthServerURI = 'http://localhost:9000';
+        const oauth2WebSocketResourceServerURI = 'http://localhost:8081';
         const { createApp, ref, onMounted } = Vue
         
         //store
         const store = Vuex.createStore({
             state () {
                 return {
-                    isLoggedIn: false || localStorage.getItem('access_token') ? true : false
+                    isLoggedIn: localStorage.getItem('access_token') ? true : false, 
+                    me: null
                 }
             },
             mutations: {
-                loggedIn (state) {
+                loggedIn (state, whoAmI) {
                     state.isLoggedIn = true
+                    state.me = whoAmI;
                 },
                 logout (state) {
                     state.isLoggedIn = false
@@ -136,7 +141,7 @@
                 }
                 
                 const websocket = () => {
-                    const socket = new SockJS('http://localhost:8081/stomp-endpoint');
+                    const socket = new SockJS(`${oauth2WebSocketResourceServerURI}/stomp-endpoint`);
                     stompClient.value = Stomp.over(socket);
                     const accessToken = localStorage.getItem('access_token');
                     stompClient.value.connect({'Authorization': 'Bearer ' + accessToken}, (frame) => {
@@ -151,9 +156,12 @@
                         });
 
                         stompClient.value.send("/app/chat", {}, JSON.stringify({message: "Hello!", to: "ALL"}));
-                        stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Bret"}));
+                        stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Samantha"}));
                     }, (error) => {
                         console.error('Failed to connect:', error);
+                        if (error.headers && error.headers.message) {
+                            console.error('Error message:', error.headers.message);
+                        }
                     });
 
                     // Handle connection closure
@@ -176,26 +184,55 @@
                             console.error('Error fetching users:', error);
                         });
                 }
+
+                const sendMessage = () => {
+                    stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Samantha"}));
+                }
                 
                 onMounted(() => {
                     fetchUsers();
                 });
 
                 return {
-                    users, selectedUser, whoAmI, e, setSelecedUser
+                    users, selectedUser, whoAmI, e, setSelecedUser, sendMessage
                 };
             },
             template: '#chat-template' 
         }
         const Home = {
             setup() {
+                const whoAmI = (accessToken) => {
+                    fetch(`${oauth2WebSocketResourceServerURI}/api/me`, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        }
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('Failed to obtain user info');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            me.value = data
+                            store.commit('loggedIn', data);
+                        })
+                        .catch(error => {
+                            error.value = error.message;
+                            console.error('Failed to obtain user info:', error);
+                        });
+                }
+                
                 const accessToken = localStorage.getItem('access_token');
                 if (accessToken) {
-                    store.commit('loggedIn');
+                    whoAmI();
+                    //store.commit('loggedIn');
                 }
 
                 const loading = ref(false);
                 const error = ref(null);
+                const me = ref({});
                 
                 const urlParams = new URLSearchParams(window.location.search);
                 const code = urlParams.get('code');
@@ -227,16 +264,15 @@
                             return response.json();
                         })
                         .then(data => {
-                            console.log(data);
                             const accessToken = data.access_token;
                             localStorage.setItem('access_token', accessToken);
                             
-                            store.commit('loggedIn');
+                            store.commit('loggedIn', {});
                             setInterval(() => {
                                 loading.value = false;
                                 window.history.replaceState({}, document.title, "/");
                                 //router.push('/about')
-                            }, 2000);
+                            }, 1500);
                             
                         })
                         .catch(error => {
@@ -247,13 +283,12 @@
                 }
 
                 return {
-                    loading,
-                    error
+                    loading, error, me
                 };
             },
             template: `
                 <p v-if="$store.state.isLoggedIn">
-                    You are logged in
+                    You are logged in as {{ me }}<br/>
                 </p>
                 <p v-else>
                     Please <router-link to="/login">Login</router-link> to do more    
