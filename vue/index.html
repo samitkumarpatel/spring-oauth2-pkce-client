@@ -32,6 +32,18 @@
             padding: 5px;
             margin-right: 5px;
         }
+
+        #system__message {
+            text-align: center;
+        }
+        
+        #incomming__message {
+            text-align: left;
+        }
+        
+        #outgoing__message {
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -42,8 +54,8 @@
                 <router-link to="/">Home</router-link>
                 <router-link to="/chat" v-if="$store.state.isLoggedIn">Chat</router-link>
             </div>
-            <div>
-                <p v-if="$store.state.isLoggedIn">Welcome {{ $store.state.me }}</p>
+            <div style="display: flex; gap: 10px;">
+                <span v-if="$store.state.isLoggedIn">Welcome, {{ $store.state.me?.username }}</span>
                 <router-link to="/logout" v-if="$store.state.isLoggedIn">Logout</router-link>
                 <router-link to="/login" v-else>Login</router-link>
             </div>
@@ -68,28 +80,21 @@
                 <hr/>
                 
                 <div style="display: flex; gap: 5px; flex-direction: column; text-align: center; border: 1px solid #ccc; border-radius: 25px; padding: 50px;">
-                    <p style="text-align: right;">
-                        <span>incoming message</span>
-                        <span class="avatar">&#128100;</span>
+                    <p :class="messageAlignment(im)" v-for="im in instantMessage">
+                        <span v-if="im.to === 'ALL' || im.from !== $store.state.me.username" class="avatar">&#128100;</span>
+                        <span>{{ im.message }}</span>
+                        <span v-if="im.from === $store.state.me.username" class="avatar">&#128100;</span>
                     </p>
-                    <p style="text-align: left;">
-                        <span class="avatar">&#128100;</span>
-                        <span>message outcome</span>
-                    </p>
-                    <p style="text-align: left;"><span class="avatar">&#128100;</span><span>message outcome</span></p>
-                    <p style="text-align: left;"><span class="avatar">&#128100;</span><span>message outcome</span></p>
-                    <p style="text-align: right;"><span>incoming message</span><span class="avatar">&#128100;</span></p>
-                    <p style="text-align: right;"><span>incoming message</span><span class="avatar">&#128100;</span></p>
                 </div>
                 <form @submit.prevent="sendMessage()" style="display: flex; border: 1px solid #ccc; border-radius: 20px; width: 100%; padding: 30px;margin-top: 10px; text-align: center;">
-                    <input type="text" placeholder="Type your message here..." style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
-                    <button style="margin-left: 10px;">Send</button>
+                    <input type="text" placeholder="Type your message here..." v-model="msg" style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
+                    <button style="margin-left: 10px;" :disabled="!msg">Send</button>
                 </form>
                     
             </section>
             <ul v-else style="list-style-type: none; padding: 0;">
                 <li v-for="u in users">
-                    <p class="user" @click="selectedUser = u">{{u.username}}</p>
+                    <p v-if="u.username !== $store.state.me.username" class="user" @click="selectedUser = u">{{u.username}}</p>
                 </li>
             </ul>
             
@@ -113,7 +118,7 @@
             state () {
                 return {
                     isLoggedIn: localStorage.getItem('access_token') ? true : false, 
-                    me: null
+                    me: { name: 'UNKNOWN'}
                 }
             },
             mutations: {
@@ -132,12 +137,23 @@
             setup() {
                 const users = ref([]);
                 const selectedUser = ref(null);
-                const whoAmI = ref(null);
                 const stompClient = ref(null);
                 const e = ref(null);
-                
+                const msg = ref('');
+                const instantMessage = ref([]);
+
                 const setSelecedUser = (user) => {
                     selectedUser.value = user;
+                }
+
+                const messageAlignment = (im) => {
+                    if (im.to  === 'ALL') {
+                        return 'system__message';
+                    } else if (im.from === store.state.me.username) {
+                        return 'outgoing__message';
+                    } else {
+                        return 'incomming__message';
+                    }
                 }
                 
                 const websocket = () => {
@@ -149,14 +165,15 @@
                         
                         stompClient.value.subscribe('/topic/public', (message) => {
                             console.log("PUBLIC MESSAGE:", message.body);
+                            instantMessage.value.push(JSON.parse(message.body));
                         });
 
                         stompClient.value.subscribe('/user/queue/private', (message) => {
                             console.log("PRIVATE MESSAGE:", message.body);
+                            instantMessage.value.push(JSON.parse(message.body));
                         });
 
-                        stompClient.value.send("/app/chat", {}, JSON.stringify({message: "Hello!", to: "ALL"}));
-                        stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Samantha"}));
+                        stompClient.value.send("/app/chat", {}, JSON.stringify({message: `${store.state.me.username} is available!`, to: "ALL"}));
                     }, (error) => {
                         console.error('Failed to connect:', error);
                         if (error.headers && error.headers.message) {
@@ -186,7 +203,8 @@
                 }
 
                 const sendMessage = () => {
-                    stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: "Hej", to: "Samantha"}));
+                    stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: msg.value, to: selectedUser.value.username}));
+                    msg.value = '';
                 }
                 
                 onMounted(() => {
@@ -194,15 +212,18 @@
                 });
 
                 return {
-                    users, selectedUser, whoAmI, e, setSelecedUser, sendMessage
+                    users, selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, messageAlignment
                 };
             },
             template: '#chat-template' 
         }
         const Home = {
             setup() {
+                const loading = ref(false);
+                const error = ref(null);
+                
                 const whoAmI = (accessToken) => {
-                    fetch(`${oauth2WebSocketResourceServerURI}/api/me`, {
+                    fetch(`${oauth2WebSocketResourceServerURI}/who-am-i`, {
                         method: 'GET',
                         headers: {
                             'Authorization': `Bearer ${accessToken}`
@@ -210,29 +231,27 @@
                     })
                         .then(response => {
                             if (!response.ok) {
+                                if(response.status === 401) {
+                                    localStorage.removeItem('access_token');
+                                    store.commit('logout');
+                                    router.push('/login');
+                                }
                                 throw new Error('Failed to obtain user info');
                             }
                             return response.json();
                         })
                         .then(data => {
-                            me.value = data
                             store.commit('loggedIn', data);
                         })
                         .catch(error => {
                             error.value = error.message;
-                            console.error('Failed to obtain user info:', error);
                         });
                 }
                 
                 const accessToken = localStorage.getItem('access_token');
                 if (accessToken) {
-                    whoAmI();
-                    //store.commit('loggedIn');
+                    whoAmI(accessToken);
                 }
-
-                const loading = ref(false);
-                const error = ref(null);
-                const me = ref({});
                 
                 const urlParams = new URLSearchParams(window.location.search);
                 const code = urlParams.get('code');
@@ -283,12 +302,15 @@
                 }
 
                 return {
-                    loading, error, me
+                    loading, error
                 };
             },
             template: `
                 <p v-if="$store.state.isLoggedIn">
-                    You are logged in as {{ me }}<br/>
+                    You are logged in as <strong>{{ $store.state.me.username }}</strong> <br/>
+                    <strong>Id::</strong> {{ $store.state.me.id }}<br/>
+                    <strong>Name::</strong> {{ $store.state.me.name }}<br/>
+                    <strong>Email::</strong> {{ $store.state.me.email }}<br/>
                 </p>
                 <p v-else>
                     Please <router-link to="/login">Login</router-link> to do more    
