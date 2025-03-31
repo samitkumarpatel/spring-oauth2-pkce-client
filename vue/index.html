@@ -11,48 +11,120 @@
             width: 50%;
             margin-top: 30px;
         }
+        .user {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 5px 0;
+        }
+        .user:hover {
+            background-color: #e0e0e0;
+        }
+        .user.selected {
+            background-color: #d0d0ff;
+        }
+        span {
+            margin-left: 10px;
+        }
+        span.avatar {
+            background-color: #ccc;
+            border-radius: 50%;
+            padding: 5px;
+            margin-right: 5px;
+        }
+
+        #system__message {
+            text-align: center;
+        }
+        
+        #incomming__message {
+            text-align: left;
+        }
+        
+        #outgoing__message {
+            text-align: right;
+        }
     </style>
 </head>
 <body>
-    <h3>Login With</h3>
+    <h3>Welcome!</h3>
     <div id="app">
         <header style="display: flex; gap: 10px; justify-content: space-between;">
             <div style="display: flex; gap: 20px;">
                 <router-link to="/">Home</router-link>
-                <router-link to="/about" v-if="$store.state.isLoggedIn">About</router-link>
+                <router-link to="/chat" v-if="$store.state.isLoggedIn">Chat</router-link>
             </div>
-            <div>
+            <div style="display: flex; gap: 10px;">
+                <span v-if="$store.state.isLoggedIn">Welcome, {{ $store.state.me?.username }}</span>
                 <router-link to="/logout" v-if="$store.state.isLoggedIn">Logout</router-link>
                 <router-link to="/login" v-else>Login</router-link>
             </div>
         </header>
-        
-        
         <hr/>
         <router-view></router-view>
-        <hr/>
+        <footer style="text-align: right;margin-top: 20px;">
+            <hr/>
+            <small>&#169; all right reserved!</small>
+        </footer>
     </div>
-
+    <template id="chat-template">
+        <div>
+            <p v-if="e" style="color: red;">{{ e }}</p>
+            <section v-if="selectedUser">
+                <div style="display: flex; flex-direction: column; background-color: lightgray; border-radius: 5px; padding: 5px;">
+                    <h3>{{ selectedUser.username }}</h3>
+                    <small>Email: {{ selectedUser.email }}</small><br/>
+                    <small>Phone: {{ selectedUser.phone }}</small>
+                    <p style="color: blue;" @click="selectedUser = null">back</p>
+                </div>
+                <hr/>
+                
+                <div style="display: flex; gap: 5px; flex-direction: column; text-align: center; border: 1px solid #ccc; border-radius: 25px; padding: 50px;">
+                    <p :class="messageAlignment(im)" v-for="im in instantMessage">
+                        <span v-if="im.to === 'ALL' || im.from !== $store.state.me.username" class="avatar">&#128100;</span>
+                        <span>{{ im.message }}</span>
+                        <span v-if="im.from === $store.state.me.username" class="avatar">&#128100;</span>
+                    </p>
+                </div>
+                <form @submit.prevent="sendMessage()" style="display: flex; border: 1px solid #ccc; border-radius: 20px; width: 100%; padding: 30px;margin-top: 10px; text-align: center;">
+                    <input type="text" placeholder="Type your message here..." v-model="msg" style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
+                    <button style="margin-left: 10px;" :disabled="!msg">Send</button>
+                </form>
+                    
+            </section>
+            <ul v-else style="list-style-type: none; padding: 0;">
+                <li v-for="u in users">
+                    <p v-if="u.username !== $store.state.me.username" class="user" @click="selectedUser = u">{{u.username}}</p>
+                </li>
+            </ul>
+            
+        </div>
+    </template>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://unpkg.com/vue-router@4"></script>
-    <script src="https://unpkg.com/vuex@4"></script>
+    <script src="./vue-libs/vue-router/dist/vue-router.global.js"></script>
+    <script src="./vue-libs/vuex/dist/vuex.global.js"></script>
     <script src="oauth2-util.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
 
     <script>
         const redirectURI = 'http://127.0.0.1:3000';
         const oauth2AuthServerURI = 'http://localhost:9000';
+        const oauth2WebSocketResourceServerURI = 'http://localhost:8081';
         const { createApp, ref, onMounted } = Vue
         
         //store
         const store = Vuex.createStore({
             state () {
                 return {
-                    isLoggedIn: false
+                    isLoggedIn: localStorage.getItem('access_token') ? true : false, 
+                    me: { name: 'UNKNOWN'}
                 }
             },
             mutations: {
-                loggedIn (state) {
+                loggedIn (state, whoAmI) {
                     state.isLoggedIn = true
+                    state.me = whoAmI;
                 },
                 logout (state) {
                     state.isLoggedIn = false
@@ -61,17 +133,125 @@
         })
 
         //Components
-        const About = { template: '<div>About</div>' }
-        const Dashboard = { template: '<div>Dashboard</div>' }
-        const Home = {
+        const Chat = {
             setup() {
-                const accessToken = localStorage.getItem('access_token');
-                if (accessToken) {
-                    store.commit('loggedIn');
+                const users = ref([]);
+                const selectedUser = ref(null);
+                const stompClient = ref(null);
+                const e = ref(null);
+                const msg = ref('');
+                const instantMessage = ref([]);
+
+                const setSelecedUser = (user) => {
+                    selectedUser.value = user;
                 }
 
+                const messageAlignment = (im) => {
+                    if (im.to  === 'ALL') {
+                        return 'system__message';
+                    } else if (im.from === store.state.me.username) {
+                        return 'outgoing__message';
+                    } else {
+                        return 'incomming__message';
+                    }
+                }
+                
+                const websocket = () => {
+                    const socket = new SockJS(`${oauth2WebSocketResourceServerURI}/stomp-endpoint`);
+                    stompClient.value = Stomp.over(socket);
+                    const accessToken = localStorage.getItem('access_token');
+                    stompClient.value.connect({'Authorization': 'Bearer ' + accessToken}, (frame) => {
+                        console.log("Connected: " + frame);
+                        
+                        stompClient.value.subscribe('/topic/public', (message) => {
+                            console.log("PUBLIC MESSAGE:", message.body);
+                            instantMessage.value.push(JSON.parse(message.body));
+                        });
+
+                        stompClient.value.subscribe('/user/queue/private', (message) => {
+                            console.log("PRIVATE MESSAGE:", message.body);
+                            instantMessage.value.push(JSON.parse(message.body));
+                        });
+
+                        stompClient.value.send("/app/chat", {}, JSON.stringify({message: `${store.state.me.username} is available!`, to: "ALL"}));
+                    }, (error) => {
+                        console.error('Failed to connect:', error);
+                        if (error.headers && error.headers.message) {
+                            console.error('Error message:', error.headers.message);
+                        }
+                    });
+
+                    // Handle connection closure
+                    socket.onclose = (event) => {
+                        console.log(`Socket closed`, event);
+                    };
+                }
+
+                const fetchUsers = () => {
+                    fetch('https://jsonplaceholder.typicode.com/users')
+                        .then(response => response.json())
+                        .then(data => {
+                            users.value = data;
+                        })
+                        .then(() => {
+                            websocket();
+                        })
+                        .catch(error => {
+                            e.value = error;
+                            console.error('Error fetching users:', error);
+                        });
+                }
+
+                const sendMessage = () => {
+                    stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: msg.value, to: selectedUser.value.username}));
+                    msg.value = '';
+                }
+                
+                onMounted(() => {
+                    fetchUsers();
+                });
+
+                return {
+                    users, selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, messageAlignment
+                };
+            },
+            template: '#chat-template' 
+        }
+        const Home = {
+            setup() {
                 const loading = ref(false);
                 const error = ref(null);
+                
+                const whoAmI = (accessToken) => {
+                    fetch(`${oauth2WebSocketResourceServerURI}/who-am-i`, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        }
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                if(response.status === 401) {
+                                    localStorage.removeItem('access_token');
+                                    store.commit('logout');
+                                    router.push('/login');
+                                }
+                                throw new Error('Failed to obtain user info');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            store.commit('loggedIn', data);
+                        })
+                        .catch(error => {
+                            error.value = error.message;
+                        });
+                }
+                
+                const accessToken = localStorage.getItem('access_token');
+                if (accessToken) {
+                    whoAmI(accessToken);
+                }
                 
                 const urlParams = new URLSearchParams(window.location.search);
                 const code = urlParams.get('code');
@@ -103,35 +283,34 @@
                             return response.json();
                         })
                         .then(data => {
-                            console.log(data);
                             const accessToken = data.access_token;
                             localStorage.setItem('access_token', accessToken);
                             
-                            store.commit('loggedIn');
+                            store.commit('loggedIn', {});
                             setInterval(() => {
                                 loading.value = false;
                                 window.history.replaceState({}, document.title, "/");
                                 //router.push('/about')
-                            }, 2000);
+                            }, 1500);
                             
                         })
                         .catch(error => {
                             error.value = error.message;
                             loading.value = false;
                             console.error('Failed to obtain access token:', error);
-                        });
-
-                    
+                        }); 
                 }
 
                 return {
-                    loading,
-                    error
+                    loading, error
                 };
             },
             template: `
                 <p v-if="$store.state.isLoggedIn">
-                    You are logged in
+                    You are logged in as <strong>{{ $store.state.me.username }}</strong> <br/>
+                    <strong>Id::</strong> {{ $store.state.me.id }}<br/>
+                    <strong>Name::</strong> {{ $store.state.me.name }}<br/>
+                    <strong>Email::</strong> {{ $store.state.me.email }}<br/>
                 </p>
                 <p v-else>
                     Please <router-link to="/login">Login</router-link> to do more    
@@ -145,12 +324,6 @@
                 const message = ref('Chose one to Login With: ')
                 const redirecting = ref(false);
                 function oauth2Login() {
-                    //const codeVerifier = generateCodeVerifier();
-                    // generateCodeChallengeFromVerifier(codeVerifier)
-                    //     .then(codeChallenge => {
-                    //         localStorage.setItem("pkace", JSON.stringify({ codeVerifier, codeChallenge }));
-                    //         window.location.href = `${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${codeChallenge}&code_challenge_method=S256&code_verifier=${codeVerifier}&redirect_uri=${redirectURI}`;
-                    //     })
                     
                     fetch(`${oauth2AuthServerURI}/public/pkce`)
                         .then(response => {
@@ -165,7 +338,7 @@
                             message.value = 'Redirecting to Spring oauth2 server, Please wait...';
                             redirecting.value = true;
                             setInterval(() => {
-                                window.location.replace(`${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${data.codeChallenge}&code_challenge_method=S256&code_verifier=${data.codeVerifier}&redirect_uri=${redirectURI}`);
+                                window.location.replace(`${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${data.codeChallenge}&code_challenge_method=S256&redirect_uri=${redirectURI}`);
                             }, 2000);
                             
                         })
@@ -192,10 +365,10 @@
         }
 
         const routes = [
-            { path: '/', component: Home },
-            { path: '/about', component: About },
-            { path: '/login', component: Login },
-            { path: '/logout', component: {
+            { path: '/', name: 'Home', component: Home },
+            { path: '/chat', name: 'Chat', component: Chat },
+            { path: '/login', name: 'Login', component: Login },
+            { path: '/logout', name: 'Logout', component: {
                 setup() {
                     localStorage.removeItem('access_token');
                     localStorage.removeItem('pkace');
@@ -210,7 +383,20 @@
             routes,
         })
 
-        createApp({}).use(store).use(router).mount('#app')
+        router.beforeEach(async (to, from) => {
+            console.log('Navigating to:', to.name);
+            const isAuthenticated = store.state.isLoggedIn;
+            console.log('isAuthenticated:', isAuthenticated);
+            // if (to.name === 'Chat' && !isAuthenticated) {
+            //     console.log('Redirecting to login page');
+            //     return { name: 'Login' };
+            // }
+        })
+
+        createApp({})
+            .use(store)
+            .use(router)
+            .mount('#app')
     </script>
 </body>
 </html>

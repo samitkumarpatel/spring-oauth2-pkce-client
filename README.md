@@ -2,7 +2,7 @@
 
 ### Login
 
-http://localhost:9000/oauth2/authorize?response_type=code&redirect_uri=http://127.0.0.1:3000&client_id=public-client&scope=profile&code_challenge_method=S256&code_challenge=&code_verifier=
+http://localhost:9000/oauth2/authorize?response_type=code&redirect_uri=http://127.0.0.1:3000&client_id=public-client&scope=profile&code_challenge_method=S256&code_challenge=
 
 ### Get TOken
 
