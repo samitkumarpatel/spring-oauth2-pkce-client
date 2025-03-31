@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wensocket</title>
+    <style>
+        body {
+            margin-left: auto;
+            margin-right: auto;
+            width: 50%;
+        }
+    </style>
+</head>
+<body>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="./oauth2-util.js"></script>
+    
+    <div id="app">
+        {{ message }}
+        <hr/>
+        <div v-if="!isLoggedIn" style="text-align: center;">
+            <button @click="login">Login</button>
+        </div>
+        <div v-if="isLoggedIn" style="display: flex; justify-content: space-between;">
+            <p>Welcome</p>
+            <p style="color: blue;">Login</p>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref } = Vue
+        const oidcClient = {
+                authorizationServer: "http://localhost:9000",
+                clientId: "public-client",
+                redirectUri: "http://127.0.0.1:3000",
+                scope: "profile"
+            }
+        createApp({
+            setup() {
+                const message = ref('Websocket!')
+                const isLoggedIn = ref(false)
+                const pkce = ref(localStorage.getItem('pkace') || null)
+                
+                const login = () => {
+                    const { codeChallenge, codeVerifier } = JSON.parse(pkce.value)
+                    
+                    const url = new URL(`${oidcClient.authorizationServer}/oauth2/authorize`)
+                    url.searchParams.set('response_type', 'code')
+                    url.searchParams.set('client_id', oidcClient.clientId)
+                    url.searchParams.set('redirect_uri', oidcClient.redirectUri)
+                    url.searchParams.set('scope', oidcClient.scope)
+                    url.searchParams.set('code_challenge_method', 'S256')
+                    url.searchParams.set('code_challenge', codeChallenge)
+                    window.location.replace(url.toString())
+                }
+                
+                if (!localStorage.getItem('pkace')) {
+                    generateProofKeyForCodeChallenge()
+                        .then(data => {
+                            pkce.value = data
+                            localStorage.setItem('pkace', JSON.stringify(data))
+                        })
+                        .catch(err => console.error('Error generating PKCE:', err))
+                }
+                
+                return {
+                    message, isLoggedIn, login
+                }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
