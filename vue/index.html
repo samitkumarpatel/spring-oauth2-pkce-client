@@ -44,6 +44,11 @@
         #outgoing__message {
             text-align: right;
         }
+
+        #online {
+            background-color: green;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
@@ -81,8 +86,8 @@
                 
                 <div style="display: flex; gap: 5px; flex-direction: column; text-align: center; border: 1px solid #ccc; border-radius: 25px; padding: 50px;">
                     <p :class="messageAlignment(im)" v-for="im in instantMessage">
-                        <span v-if="im.to === 'ALL' || im.from !== $store.getters.me.username" class="avatar">&#128100;</span>
-                        <span>{{ im.message }}</span>
+                        <span v-if="im.from === 'SYSTEM' || im.from !== $store.getters.me.username" class="avatar">&#128100;</span>
+                        <span>{{ im }}</span>
                         <span v-if="im.from === $store.getters.me.username" class="avatar">&#128100;</span>
                     </p>
                 </div>
@@ -90,11 +95,16 @@
                     <input type="text" placeholder="Type your message here..." v-model="msg" style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
                     <button style="margin-left: 10px;" :disabled="!msg">Send</button>
                 </form>
-                    
             </section>
+            
             <ul v-else style="list-style-type: none; padding: 0;">
+                <input type="text" placeholder="Search user..." v-model="searchUserText" disabled/>
+                <p v-if="loading">Loading....</p>
                 <li v-for="u in users">
-                    <p v-if="u.username !== $store.getters.me.username" class="user" @click="selectedUser = u">{{u.username}}</p>
+                    <div v-if="u.username !== $store.getters.me.username" :class="u.online ? 'user online' : 'user'" @click="selectedUser = u" style="display: flex; gap: 5px; padding: 15px; cursor: pointer; justify-content: space-between;">
+                        <span>{{u.username}}</span>
+                        <span>{{u.unread}}</span>
+                    </div>
                 </li>
             </ul>
             
@@ -111,14 +121,14 @@
         const redirectURI = 'http://127.0.0.1:3000';
         const oauth2AuthServerURI = 'http://localhost:9000';
         const oauth2WebSocketResourceServerURI = 'http://localhost:8081';
-        const { createApp, ref, onMounted } = Vue
+        const { createApp, ref, onMounted, watch } = Vue
         
         //store
         const store = Vuex.createStore({
             state () {
                 return {
                     isLoggedIn: false, 
-                    me: { name: 'UNKNOWN'}
+                    me: { name: 'UNKNOWN'},
                 }
             },
             mutations: {
@@ -150,6 +160,15 @@
                         })
                         .then(data => state.me = data)
                         .catch(error => console.error('Error fetching user info:', error));
+                },
+                fetchAllUsers (state) {
+                    fetch('https://jsonplaceholder.typicode.com/users')
+                        .then(response => response.json())
+                        .then(data => data.map(user => { return {...user, online: false, unread: 0}}))
+                        .then(data => state.users = data)
+                        .catch(error => {
+                            console.error('Error fetching users:', error);
+                        });
                 }
             },
             getters: {
@@ -158,6 +177,15 @@
                 },
                 me (state) {
                     return state.me
+                },
+                users (state) {
+                    return state.users
+                },
+                usersByUsername(state) {
+                    //like search
+                    return (username) => {
+                        return state.users.filter(user => user.username.toLowerCase().includes(username.toLowerCase()));
+                    }
                 }
             },
             actions: {
@@ -169,6 +197,9 @@
                 },
                 whoAmI ({ commit }) {
                     commit('whoAmI')
+                },
+                allUser ({ commit }) {
+                    commit('fetchAllUsers')
                 }
             }
 
@@ -177,21 +208,23 @@
         //Components
         const Chat = {
             setup() {
-                const users = ref([]);
                 const selectedUser = ref(null);
                 const stompClient = ref(null);
                 const e = ref(null);
                 const msg = ref('');
                 const instantMessage = ref([]);
+                const searchUserText = ref('');
+                const users = ref([]);
+                const loading = ref(false);
 
                 const setSelecedUser = (user) => {
                     selectedUser.value = user;
                 }
 
                 const messageAlignment = (im) => {
-                    if (im.to  === 'ALL') {
+                    if (im.from  === 'SYSTEM') {
                         return 'system__message';
-                    } else if (im.from === store.state.me.username) {
+                    } else if (im.from === store.getters.me.username) {
                         return 'outgoing__message';
                     } else {
                         return 'incomming__message';
@@ -215,12 +248,8 @@
                             instantMessage.value.push(JSON.parse(message.body));
                         });
 
-                        stompClient.value.send("/app/chat", {}, JSON.stringify({message: `${store.state.me.username} is available!`, to: "ALL"}));
                     }, (error) => {
                         console.error('Failed to connect:', error);
-                        if (error.headers && error.headers.message) {
-                            console.error('Error message:', error.headers.message);
-                        }
                     });
 
                     // Handle connection closure
@@ -228,36 +257,40 @@
                         console.log(`Socket closed`, event);
                     };
                 }
-
-                const fetchUsers = () => {
-                    fetch('https://jsonplaceholder.typicode.com/users')
-                        .then(response => response.json())
-                        .then(data => {
-                            users.value = data;
-                        })
-                        .then(() => {
-                            websocket();
-                        })
-                        .catch(error => {
-                            e.value = error;
-                            console.error('Error fetching users:', error);
-                        });
-                }
-
+                
                 const sendMessage = () => {
                     stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: msg.value, to: selectedUser.value.username}));
                     msg.value = '';
                 }
-                
-                onMounted(() => {
-                    store.dispatch('login');
-                    store.dispatch('whoAmI');
-                    fetchUsers();
 
+                onMounted(() => {
+                    //check if user is logged in
+                    store.dispatch('login');
+                    //Check the authorization token is valid and who is it!
+                    store.dispatch('whoAmI');
+                    // fetch all users
+                    store.dispatch('allUser');
+                    loading.value = true;
+                    setInterval(() => {
+                        users.value = store.getters.users
+                        loading.value = false;
+                    }, 1000);
+                    users.value = store.getters.users;
+                    //connect to websocket
+                    websocket();
+                });
+
+                watch(searchUserText, (newValue) => {
+                    if (newValue) {
+                        users.value = store.getters.usersByUsername(newValue);
+                    } else {
+                        users.value = store.getters.users;
+                    }
                 });
 
                 return {
-                    users, selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, messageAlignment
+                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, 
+                        messageAlignment, searchUserText, users, loading
                 };
             },
             template: '#chat-template' 
@@ -337,11 +370,18 @@
                             return response.json();
                         })
                         .then(data => {
-                            console.log(data);
                             localStorage.setItem("pkace", JSON.stringify(data));
                             message.value = 'Redirecting to Spring oauth2 server, Please wait...';
                             redirecting.value = true;
+                            // const url = new URL(`${oidcClient.authorizationServer}/oauth2/authorize`)
+                            // url.searchParams.set('response_type', 'code')
+                            // url.searchParams.set('client_id', oidcClient.clientId)
+                            // url.searchParams.set('redirect_uri', oidcClient.redirectUri)
+                            // url.searchParams.set('scope', oidcClient.scope)
+                            // url.searchParams.set('code_challenge_method', 'S256')
+                            // url.searchParams.set('code_challenge', codeChallenge)
                             setInterval(() => {
+                                //url.toString()
                                 window.location.replace(`${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${data.codeChallenge}&code_challenge_method=S256&redirect_uri=${redirectURI}`);
                             }, 1000);
                             
