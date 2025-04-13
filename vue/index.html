@@ -75,6 +75,11 @@
     <template id="chat-template">
         <div>
             <p v-if="e" style="color: red;">{{ e }}</p>
+            <p v-if="flashMessages.length > 0" style="color: blue;">
+                <span v-for="(msg, index) in flashMessages" :key="index">
+                    {{ msg.event }}: {{ msg.payload.message }}
+                </span>
+            </p>
             <section v-if="selectedUser">
                 <div style="display: flex; flex-direction: column; background-color: lightgray; border-radius: 5px; padding: 5px;">
                     <h3>{{ selectedUser.username }}</h3>
@@ -84,12 +89,28 @@
                 </div>
                 <hr/>
                 
-                <div style="display: flex; gap: 5px; flex-direction: column; text-align: center; border: 1px solid #ccc; border-radius: 25px; padding: 50px;">
-                    <p :class="messageAlignment(im)" v-for="im in instantMessage">
-                        <span v-if="im.from === 'SYSTEM' || im.from !== $store.getters.me.username" class="avatar">&#128100;</span>
-                        <span>{{ im }}</span>
-                        <span v-if="im.from === $store.getters.me.username" class="avatar">&#128100;</span>
-                    </p>
+                <div style="display: flex; gap: 5px; justify-content: center; flex-direction: column; border: 1px solid #ccc; border-radius: 25px; padding: 50px;">
+                    <template v-for="im in selectedUser.messages">
+                        <!-- my own message-->
+                        <p v-if="im.from === $store.getters.me.id" style="display: flex; justify-content: flex-end; align-items: center;">
+                            <span>
+                                {{ im.content }}
+                                <br/>
+                                <small style="font-style: italic;">{{im.createdAt ? im.createdAt : new Date()}}</small>
+                            </span>
+                            <span class="avatar">&#128100;</span>
+                        </p>
+                        
+                        <!--selected User Message-->
+                        <p v-else style="display: flex; justify-content: flex-start; align-items: center;">
+                            <span class="avatar">&#128100;</span>
+                            <span>
+                                {{ im.content }}
+                                <br/>
+                                <small style="font-style: italic;">{{im.createdAt ? im.createdAt : new Date()}}</small>
+                            </span>
+                        </p>
+                    </template>
                 </div>
                 <form @submit.prevent="sendMessage()" style="display: flex; border: 1px solid #ccc; border-radius: 20px; width: 100%; padding: 30px;margin-top: 10px; text-align: center;">
                     <input type="text" placeholder="Type your message here..." v-model="msg" style="width: 100%; max-height: fit-content; border: none; outline: none; padding: 5px; border-radius: 5px;"/>
@@ -164,7 +185,7 @@
                 fetchAllUsers (state) {
                     fetch('https://jsonplaceholder.typicode.com/users')
                         .then(response => response.json())
-                        .then(data => data.map(user => { return {...user, online: false, unread: 0}}))
+                        .then(data => data.map(user => { return {...user, online: false, unread: 0, messages: []}}))
                         .then(data => state.users = data)
                         .catch(error => {
                             console.error('Error fetching users:', error);
@@ -176,7 +197,7 @@
                     return state.isLoggedIn
                 },
                 me (state) {
-                    return state.me
+                    return {...state.me, id: Number(state.me.id)}
                 },
                 users (state) {
                     return state.users
@@ -212,10 +233,11 @@
                 const stompClient = ref(null);
                 const e = ref(null);
                 const msg = ref('');
-                const instantMessage = ref([]);
+                const instantMessage = ref(null);
                 const searchUserText = ref('');
                 const users = ref([]);
                 const loading = ref(false);
+                const flashMessages = ref([]);
 
                 const setSelecedUser = (user) => {
                     selectedUser.value = user;
@@ -240,12 +262,12 @@
                         
                         stompClient.value.subscribe('/topic/public', (message) => {
                             console.log("PUBLIC MESSAGE:", message.body);
-                            instantMessage.value.push(JSON.parse(message.body));
+                            instantMessage.value = JSON.parse(message.body);
                         });
 
                         stompClient.value.subscribe('/user/queue/private', (message) => {
                             console.log("PRIVATE MESSAGE:", message.body);
-                            instantMessage.value.push(JSON.parse(message.body));
+                            instantMessage.value = JSON.parse(message.body);
                         });
 
                     }, (error) => {
@@ -280,6 +302,24 @@
                     websocket();
                 });
 
+                const conversationsBetweenUsers = () => {
+                    fetch(`${oauth2WebSocketResourceServerURI}/message/conversation/${selectedUser.value.id}`, {
+                        method: 'GET',
+                        headers: {'Authorization': `Bearer ${localStorage.getItem('access_token')}`}
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('Failed to obtain user info');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            console.log("CONVERSATION:", data);
+                            selectedUser.value.messages = data;
+                        })
+                        .catch(error => console.error('Error fetching user info:', error));
+                }
+
                 watch(searchUserText, (newValue) => {
                     if (newValue) {
                         users.value = store.getters.usersByUsername(newValue);
@@ -288,9 +328,66 @@
                     }
                 });
 
+                watch(
+                    () => instantMessage.value, 
+                    (newValue) => {
+                            console.log("INSTANT MESSAGE:", newValue);
+                            if (newValue){
+                                //const meId = Number(store.getters.me.id)
+                                switch (newValue.event) {
+                                    case 'CONNECT':
+                                        console.log(`CONNECT:`, newValue);
+                                        flashMessages.value.push(newValue);
+                                        // setTimeout(() => {
+                                        //     flashMessages.value.shift();
+                                        // }, 5000);
+                                        break;
+                                    case 'DISCONNECT':
+                                        console.log(`DISCONNECT:`, newValue);
+                                        flashMessages.value.push(newValue);
+                                        break;
+                                    case 'MESSAGE_TO_ALL':
+                                        console.log(`MESSAGE_TO_ALL:`, newValue);
+                                        flashMessages.value.push(newValue);
+                                        break;
+                                    case 'MESSAGE_TO_USER':
+                                        //If the newValue.payload.from == me.username then it is a message from me to the selected user
+                                        console.log(`MESSAGE_TO_USER:`, newValue);
+                                        if(selectedUser.value) {
+                                            if (newValue.payload.from === store.getters.me.id && selectedUser.value.id === newValue.payload.to) {
+                                                selectedUser.value.messages.push(newValue.payload);
+                                            }
+                                        }
+                                        break;
+                                    case 'MESSAGE_FROM_USER':
+                                        console.log(`MESSAGE_FROM_USER:`, newValue);
+                                        if(selectedUser.value) {
+                                            if (newValue.payload.from === selectedUser.value.id ) {
+                                                selectedUser.value.messages.push(newValue.payload);
+                                            } else {
+                                                flashMessages.value.push(newValue);
+                                                //message is from another user, call the /unread/conversation endpoint + show an alert 
+                                            }
+                                        }
+                                        break;
+                                    default:
+                                        console.log(`UNKNOWN MESSAGE:`, newValue);
+                                        break;
+                                }
+                            }
+                        },
+                        { deep: true }
+                    );
+
+                watch(selectedUser, (newValue) => {
+                    if (newValue) {
+                        conversationsBetweenUsers();
+                    }
+                });
+
                 return {
                     selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, 
-                        messageAlignment, searchUserText, users, loading
+                        messageAlignment, searchUserText, users, loading, flashMessages
                 };
             },
             template: '#chat-template' 
