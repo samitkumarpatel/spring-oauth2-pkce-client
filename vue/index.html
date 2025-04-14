@@ -33,22 +33,11 @@
             margin-right: 5px;
         }
 
-        #system__message {
-            text-align: center;
-        }
-        
-        #incomming__message {
-            text-align: left;
-        }
-        
-        #outgoing__message {
-            text-align: right;
-        }
-
         #online {
             background-color: green;
             border-radius: 5px;
         }
+
     </style>
 </head>
 <body>
@@ -75,17 +64,17 @@
     <template id="chat-template">
         <div>
             <p v-if="e" style="color: red;">{{ e }}</p>
-            <p v-if="flashMessages.length > 0" style="color: blue;">
-                <span v-for="(msg, index) in flashMessages" :key="index">
-                    {{ msg.event }}: {{ msg.payload.message }}
-                </span>
-            </p>
+            <div v-if="flashMessages.length > 0" style="color: blue; border: 1px solid gray; border-radius: 5px; padding: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                <p v-for="(msg, index) in flashMessages" :key="index">
+                    {{ msg.event }}: {{ msg.payload }}
+                </p>
+            </div>
             <section v-if="selectedUser">
                 <div style="display: flex; flex-direction: column; background-color: lightgray; border-radius: 5px; padding: 5px;">
                     <h3>{{ selectedUser.username }}</h3>
                     <small>Email: {{ selectedUser.email }}</small><br/>
                     <small>Phone: {{ selectedUser.phone }}</small>
-                    <p style="color: blue;" @click="selectedUser = null">back</p>
+                    <p style="color: blue;cursor: pointer;" @click="selectedUser = null">back</p>
                 </div>
                 <hr/>
                 
@@ -96,7 +85,7 @@
                             <span>
                                 {{ im.content }}
                                 <br/>
-                                <small style="font-style: italic;">{{im.createdAt ? im.createdAt : new Date()}}</small>
+                                <small style="font-style: italic; color: gray;">{{im.createdAt ? new Date(im.createdAt).toUTCString() : new Date().toUTCString()}}</small>
                             </span>
                             <span class="avatar">&#128100;</span>
                         </p>
@@ -107,7 +96,7 @@
                             <span>
                                 {{ im.content }}
                                 <br/>
-                                <small style="font-style: italic;">{{im.createdAt ? im.createdAt : new Date()}}</small>
+                                <small style="font-style: italic; color: gray;">{{im.createdAt ? new Date(im.createdAt).toUTCString() : new Date().toUTCString()}}</small>
                             </span>
                         </p>
                     </template>
@@ -124,7 +113,7 @@
                 <li v-for="u in users">
                     <div v-if="u.username !== $store.getters.me.username" :class="u.online ? 'user online' : 'user'" @click="selectedUser = u" style="display: flex; gap: 5px; padding: 15px; cursor: pointer; justify-content: space-between;">
                         <span>{{u.username}}</span>
-                        <span>{{u.unread}}</span>
+                        <span style="font-weight: bolder;">{{u.unread}}</span>
                     </div>
                 </li>
             </ul>
@@ -142,7 +131,7 @@
         const redirectURI = 'http://127.0.0.1:3000';
         const oauth2AuthServerURI = 'http://localhost:9000';
         const oauth2WebSocketResourceServerURI = 'http://localhost:8081';
-        const { createApp, ref, onMounted, watch } = Vue
+        const { createApp, ref, onMounted, watch, onUpdated } = Vue
         
         //store
         const store = Vuex.createStore({
@@ -242,16 +231,6 @@
                 const setSelecedUser = (user) => {
                     selectedUser.value = user;
                 }
-
-                const messageAlignment = (im) => {
-                    if (im.from  === 'SYSTEM') {
-                        return 'system__message';
-                    } else if (im.from === store.getters.me.username) {
-                        return 'outgoing__message';
-                    } else {
-                        return 'incomming__message';
-                    }
-                }
                 
                 const websocket = () => {
                     const socket = new SockJS(`${oauth2WebSocketResourceServerURI}/stomp-endpoint`);
@@ -293,11 +272,12 @@
                     // fetch all users
                     store.dispatch('allUser');
                     loading.value = true;
+                    
                     setInterval(() => {
                         users.value = store.getters.users
                         loading.value = false;
                     }, 1000);
-                    users.value = store.getters.users;
+                    
                     //connect to websocket
                     websocket();
                 });
@@ -320,6 +300,24 @@
                         .catch(error => console.error('Error fetching user info:', error));
                 }
 
+                const conversationsUnreadCount = (targetUser) => {
+                    fetch(`${oauth2WebSocketResourceServerURI}/message/conversation/${targetUser.id}/unread`, {
+                        method: 'GET',
+                        headers: {'Authorization': `Bearer ${localStorage.getItem('access_token')}`}
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('Failed to obtain user info');
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            console.log(`CONVERSATION UNREAD COUNT: me and ${targetUser.id}`, data);
+                            targetUser.unread = data.count;
+                        })
+                        .catch(error => console.error('Error fetching user info:', error));
+                }
+
                 watch(searchUserText, (newValue) => {
                     if (newValue) {
                         users.value = store.getters.usersByUsername(newValue);
@@ -329,26 +327,43 @@
                 });
 
                 watch(
+                    () => users.value.size,
+                    (userCount) => {
+                        users.value.forEach(user => {
+                            if (user.username !== store.getters.me.username) {
+                                conversationsUnreadCount(user);
+                            }
+                        });
+                    },
+                    { deep: true, immediate: true }
+                );
+
+                watch(
                     () => instantMessage.value, 
                     (newValue) => {
                             console.log("INSTANT MESSAGE:", newValue);
                             if (newValue){
-                                //const meId = Number(store.getters.me.id)
                                 switch (newValue.event) {
                                     case 'CONNECT':
                                         console.log(`CONNECT:`, newValue);
                                         flashMessages.value.push(newValue);
-                                        // setTimeout(() => {
-                                        //     flashMessages.value.shift();
-                                        // }, 5000);
+                                        setTimeout(() => {
+                                            flashMessages.value.shift();
+                                        }, 5000);
                                         break;
                                     case 'DISCONNECT':
                                         console.log(`DISCONNECT:`, newValue);
                                         flashMessages.value.push(newValue);
+                                        setTimeout(() => {
+                                            flashMessages.value.shift();
+                                        }, 5000);
                                         break;
                                     case 'MESSAGE_TO_ALL':
                                         console.log(`MESSAGE_TO_ALL:`, newValue);
                                         flashMessages.value.push(newValue);
+                                        setTimeout(() => {
+                                            flashMessages.value.shift();
+                                        }, 5000);
                                         break;
                                     case 'MESSAGE_TO_USER':
                                         //If the newValue.payload.from == me.username then it is a message from me to the selected user
@@ -366,8 +381,23 @@
                                                 selectedUser.value.messages.push(newValue.payload);
                                             } else {
                                                 flashMessages.value.push(newValue);
-                                                //message is from another user, call the /unread/conversation endpoint + show an alert 
+                                                
+                                                const newUserMessage = users.value.find(user => user.id === newValue.payload.from);
+                                                conversationsUnreadCount(newUserMessage);
+                                                
+                                                setTimeout(() => {
+                                                    flashMessages.value.shift();
+                                                }, 5000);
                                             }
+                                        } else {
+                                            flashMessages.value.push(newValue);
+                                            
+                                            const newUserMessage = users.value.find(user => user.id === newValue.payload.from);
+                                            conversationsUnreadCount(newUserMessage);
+                                            
+                                            setTimeout(() => {
+                                                flashMessages.value.shift();
+                                            }, 5000);
                                         }
                                         break;
                                     default:
@@ -386,12 +416,12 @@
                 });
 
                 return {
-                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, 
-                        messageAlignment, searchUserText, users, loading, flashMessages
+                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, searchUserText, users, loading, flashMessages
                 };
             },
             template: '#chat-template' 
         }
+        
         const Home = {
             setup() {
                 const accessToken = localStorage.getItem('access_token');
