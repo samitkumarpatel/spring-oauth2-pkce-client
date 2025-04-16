@@ -179,6 +179,18 @@
                         .catch(error => {
                             console.error('Error fetching users:', error);
                         });
+                },
+                setUserOnlineStatus (state, { userId, isOnline }) {
+                    const user = state.users.find(user => user.id === userId);
+                    if (user) {
+                        user.online = isOnline;
+                    }
+                },
+                setMessageUnreadCount (state, { userId, unreadCount }) {
+                    const user = state.users.find(user => user.id === userId);
+                    if (user) {
+                        user.unread = unreadCount;
+                    }
                 }
             },
             getters: {
@@ -210,6 +222,28 @@
                 },
                 allUser ({ commit }) {
                     commit('fetchAllUsers')
+                },
+                fetchUserOnlineStatus ({ commit }, userId) {
+                    fetch(`${oauth2WebSocketResourceServerURI}/user-status/${userId}`, {
+                        method: 'GET',
+                        headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        commit('setUserOnlineStatus', { userId, isOnline: data.isOnline });
+                    })
+                    .catch(error => console.error('Error fetching user online status:', error));
+                },
+                fetchMessageUnreadCount ({ commit }, userId) {
+                    fetch(`${oauth2WebSocketResourceServerURI}/message/conversation/${userId}/unread`, {
+                        method: 'GET',
+                        headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        commit('setMessageUnreadCount', { userId, unreadCount: data.count });
+                    })
+                    .catch(error => console.error('Error fetching unread message count:', error));
                 }
             }
 
