@@ -32,9 +32,9 @@
             padding: 5px;
             margin-right: 5px;
         }
-
-        #online {
+        .online {
             background-color: green;
+            color: white;
             border-radius: 5px;
         }
 
@@ -55,6 +55,7 @@
             </div>
         </header>
         <hr/>
+        <p v-if="$store.getters.error" style="color: red;">{{ $store.getters.error }}</p>
         <router-view></router-view>
         <footer style="text-align: right;margin-top: 20px;">
             <hr/>
@@ -64,8 +65,8 @@
     <template id="chat-template">
         <div>
             <p v-if="e" style="color: red;">{{ e }}</p>
-            <div v-if="flashMessages.length > 0" style="color: blue; border: 1px solid gray; border-radius: 5px; padding: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-                <p v-for="(msg, index) in flashMessages" :key="index">
+            <div v-if="$store.getters.flashMessages.length > 0" style="color: blue; border: 1px solid gray; border-radius: 5px; padding: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                <p v-for="(msg, index) in $store.getters.flashMessages" :key="index">
                     {{ msg.event }}: {{ msg.payload }}
                 </p>
             </div>
@@ -110,10 +111,15 @@
             <ul v-else style="list-style-type: none; padding: 0;">
                 <input type="text" placeholder="Search user..." v-model="searchUserText" disabled/>
                 <p v-if="loading">Loading....</p>
-                <li v-for="u in users">
-                    <div v-if="u.username !== $store.getters.me.username" :class="u.online ? 'user online' : 'user'" @click="selectedUser = u" style="display: flex; gap: 5px; padding: 15px; cursor: pointer; justify-content: space-between;">
+                <li v-for="u in $store.getters.users">
+                    <div v-if="u.username !== $store.getters.me.username" :class="u.online ? 'user online' : 'user'" @click="selectedUser = u" style="display: flex; gap: 5px; padding: 15px; cursor: pointer;">
+                        <span class="avatar online" v-if="u.online" >&#128100;</span>
+                        <span class="avatar" v-else>&#128100;</span>
                         <span>{{u.username}}</span>
-                        <span style="font-weight: bolder;">{{u.unread}}</span>
+                        <span style="font-weight: bolder;" v-if="u.unread > 0">
+                            {{u.unread}} 
+                            <small>unread message(s)</small>
+                        </span>
                     </div>
                 </li>
             </ul>
@@ -139,18 +145,97 @@
                 return {
                     isLoggedIn: false, 
                     me: { name: 'UNKNOWN'},
+                    users: [],
+                    flashMessages: [],
+                    e: null
                 }
             },
             mutations: {
-                loggedIn (state) {
+                setLoggedIn (state) {
                     if(localStorage.getItem('access_token')) {
                         state.isLoggedIn = true;
                     }
                 },
-                logout (state) {
+                setLogout (state) {
                     state.isLoggedIn = false
                 },
-                whoAmI (state) {
+                setWhoAmI (state, {me}) {
+                    state.me = me;
+                },
+                setUsers (state, {users}) {
+                    state.users = users;
+
+                },
+                setUserOnlineStatus (state, { userId, isOnline }) {
+                    const user = state.users.find(user => user.id === userId);
+                    if (user) {
+                        user.online = isOnline;
+                    }
+                },
+                setMessageUnreadCount (state, { userId, unreadCount }) {
+                    const user = state.users.find(user => user.id === userId);
+                    if (user) {
+                        user.unread = unreadCount;
+                    }
+                },
+                setFlashMessage (state, { message }) {
+                    state.flashMessages.push(message);
+                    setTimeout(() => {
+                        state.flashMessages.shift();
+                    }, 5000);
+                },
+                setError (state, { e }) {
+                    state.e = e;
+                }
+            },
+            getters: {
+                isLoggedIn (state) {
+                    return state.isLoggedIn
+                },
+                me (state) {
+                    return {...state.me, id: Number(state.me.id)}
+                },
+                users (state) {
+                    //fetch users unread count & online status
+                    state.users.forEach(user => {
+                        if (user.username !== state.me.username) {
+                            store.dispatch('fetchMessageUnreadCount', user.id);
+                            store.dispatch('fetchUserOnlineStatus', user.id);
+                        }
+                    });
+
+                    //sort by online status
+                    state.users.sort((a, b) => {
+                        if (a.online && !b.online) return -1;
+                        if (!a.online && b.online) return 1;
+                        return 0;
+                    });
+                    
+                    return state.users
+                },
+                usersByUsername(state) {
+                    //like search
+                    return (username) => {
+                        return state.users.filter(user => user.username.toLowerCase().includes(username.toLowerCase()));
+                    }
+                },
+                flashMessages (state) {
+                    return state.flashMessages;
+                },
+                error (state) {
+                    return state.e;
+                }
+            },
+            actions: {
+                login ({ commit }) {
+                    commit('setLoggedIn')
+                },
+                logout ({ commit }) {
+                    commit('setLogout')
+                    localStorage.removeItem('access_token');
+                    localStorage.removeItem('pkace');
+                },
+                fetchWhoAmI ({ commit }) {
                     const accessToken = localStorage.getItem('access_token');
                     fetch(`${oauth2WebSocketResourceServerURI}/who-am-i`, {
                         method: 'GET',
@@ -168,60 +253,16 @@
                             }
                             return response.json();
                         })
-                        .then(data => state.me = data)
-                        .catch(error => console.error('Error fetching user info:', error));
+                        .then(data => commit('setWhoAmI', {me: data}))
+                        .catch(error => commit('setError', { e: error }));
                 },
-                fetchAllUsers (state) {
+                fetchAllUsers ({ commit }) {
                     fetch('https://jsonplaceholder.typicode.com/users')
                         .then(response => response.json())
                         .then(data => data.map(user => { return {...user, online: false, unread: 0, messages: []}}))
-                        .then(data => state.users = data)
-                        .catch(error => {
-                            console.error('Error fetching users:', error);
-                        });
-                },
-                setUserOnlineStatus (state, { userId, isOnline }) {
-                    const user = state.users.find(user => user.id === userId);
-                    if (user) {
-                        user.online = isOnline;
-                    }
-                },
-                setMessageUnreadCount (state, { userId, unreadCount }) {
-                    const user = state.users.find(user => user.id === userId);
-                    if (user) {
-                        user.unread = unreadCount;
-                    }
-                }
-            },
-            getters: {
-                isLoggedIn (state) {
-                    return state.isLoggedIn
-                },
-                me (state) {
-                    return {...state.me, id: Number(state.me.id)}
-                },
-                users (state) {
-                    return state.users
-                },
-                usersByUsername(state) {
-                    //like search
-                    return (username) => {
-                        return state.users.filter(user => user.username.toLowerCase().includes(username.toLowerCase()));
-                    }
-                }
-            },
-            actions: {
-                login ({ commit }) {
-                    commit('loggedIn')
-                },
-                logout ({ commit }) {
-                    commit('logout')
-                },
-                whoAmI ({ commit }) {
-                    commit('whoAmI')
-                },
-                allUser ({ commit }) {
-                    commit('fetchAllUsers')
+                        .then(data => commit('setUsers', {users: data}))
+                        .catch(error => commit('setError', { e: error }));
+                    
                 },
                 fetchUserOnlineStatus ({ commit }, userId) {
                     fetch(`${oauth2WebSocketResourceServerURI}/user-status/${userId}`, {
@@ -229,10 +270,8 @@
                         headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
                     })
                     .then(response => response.json())
-                    .then(data => {
-                        commit('setUserOnlineStatus', { userId, isOnline: data.isOnline });
-                    })
-                    .catch(error => console.error('Error fetching user online status:', error));
+                    .then(data => commit('setUserOnlineStatus', { userId, isOnline: data.isOnline }))
+                    .catch(error => commit('setError', { e: error }));
                 },
                 fetchMessageUnreadCount ({ commit }, userId) {
                     fetch(`${oauth2WebSocketResourceServerURI}/message/conversation/${userId}/unread`, {
@@ -240,10 +279,14 @@
                         headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
                     })
                     .then(response => response.json())
-                    .then(data => {
-                        commit('setMessageUnreadCount', { userId, unreadCount: data.count });
-                    })
-                    .catch(error => console.error('Error fetching unread message count:', error));
+                    .then(data => commit('setMessageUnreadCount', { userId, unreadCount: data.count }))
+                    .catch(error => commit('setError', { e: error }));
+                },
+                actOnFlashMessage ({ commit }, { message }) {
+                    commit('setFlashMessage', { message });
+                },
+                setError ({ commit }, { e }) {
+                    commit('setError', { e });
                 }
             }
 
@@ -258,9 +301,7 @@
                 const msg = ref('');
                 const instantMessage = ref(null);
                 const searchUserText = ref('');
-                const users = ref([]);
                 const loading = ref(false);
-                const flashMessages = ref([]);
 
                 const setSelecedUser = (user) => {
                     selectedUser.value = user;
@@ -274,22 +315,23 @@
                         console.log("Connected: " + frame);
                         
                         stompClient.value.subscribe('/topic/public', (message) => {
-                            console.log("PUBLIC MESSAGE:", message.body);
                             instantMessage.value = JSON.parse(message.body);
                         });
 
                         stompClient.value.subscribe('/user/queue/private', (message) => {
-                            console.log("PRIVATE MESSAGE:", message.body);
                             instantMessage.value = JSON.parse(message.body);
                         });
 
                     }, (error) => {
                         console.error('Failed to connect:', error);
+                        store.dispatch('setError', { e: 'WebSocket connection failed' });
                     });
 
                     // Handle connection closure
                     socket.onclose = (event) => {
                         console.log(`Socket closed`, event);
+                        stompClient.value = null;
+                        store.dispatch('setError', { e: 'WebSocket connection closed' });
                     };
                 }
                 
@@ -302,15 +344,16 @@
                     //check if user is logged in
                     store.dispatch('login');
                     //Check the authorization token is valid and who is it!
-                    store.dispatch('whoAmI');
+                    store.dispatch('fetchWhoAmI');
                     // fetch all users
-                    store.dispatch('allUser');
+                    store.dispatch('fetchAllUsers');
+
                     loading.value = true;
                     
+                    //This is to give a good feel of loading
                     setInterval(() => {
-                        users.value = store.getters.users
                         loading.value = false;
-                    }, 1000);
+                    }, 500);
                     
                     //connect to websocket
                     websocket();
@@ -331,46 +374,8 @@
                             console.log("CONVERSATION:", data);
                             selectedUser.value.messages = data;
                         })
-                        .catch(error => console.error('Error fetching user info:', error));
+                        .catch(error => store.dispatch('setError', { e: error }));
                 }
-
-                const conversationsUnreadCount = (targetUser) => {
-                    fetch(`${oauth2WebSocketResourceServerURI}/message/conversation/${targetUser.id}/unread`, {
-                        method: 'GET',
-                        headers: {'Authorization': `Bearer ${localStorage.getItem('access_token')}`}
-                    })
-                        .then(response => {
-                            if (!response.ok) {
-                                throw new Error('Failed to obtain user info');
-                            }
-                            return response.json();
-                        })
-                        .then(data => {
-                            console.log(`CONVERSATION UNREAD COUNT: me and ${targetUser.id}`, data);
-                            targetUser.unread = data.count;
-                        })
-                        .catch(error => console.error('Error fetching user info:', error));
-                }
-
-                watch(searchUserText, (newValue) => {
-                    if (newValue) {
-                        users.value = store.getters.usersByUsername(newValue);
-                    } else {
-                        users.value = store.getters.users;
-                    }
-                });
-
-                watch(
-                    () => users.value.size,
-                    (userCount) => {
-                        users.value.forEach(user => {
-                            if (user.username !== store.getters.me.username) {
-                                conversationsUnreadCount(user);
-                            }
-                        });
-                    },
-                    { deep: true, immediate: true }
-                );
 
                 watch(
                     () => instantMessage.value, 
@@ -379,29 +384,31 @@
                             if (newValue){
                                 switch (newValue.event) {
                                     case 'CONNECT':
-                                        console.log(`CONNECT:`, newValue);
-                                        flashMessages.value.push(newValue);
-                                        setTimeout(() => {
-                                            flashMessages.value.shift();
-                                        }, 5000);
+                                        //flashMessages.value.push(newValue);
+                                        store.dispatch('actOnFlashMessage', { message: newValue });
+                                        store.dispatch('fetchUserOnlineStatus', Number(newValue.payload.id));
+                                        // setTimeout(() => {
+                                        //     flashMessages.value.shift();
+                                        // }, 5000);
                                         break;
                                     case 'DISCONNECT':
-                                        console.log(`DISCONNECT:`, newValue);
-                                        flashMessages.value.push(newValue);
-                                        setTimeout(() => {
-                                            flashMessages.value.shift();
-                                        }, 5000);
+                                        //flashMessages.value.push(newValue);
+                                        store.dispatch('actOnFlashMessage', { message: newValue });
+                                        store.dispatch('fetchUserOnlineStatus', Number(newValue.payload.id));
+                                        // setTimeout(() => {
+                                        //     flashMessages.value.shift();
+                                        // }, 5000);
                                         break;
                                     case 'MESSAGE_TO_ALL':
                                         console.log(`MESSAGE_TO_ALL:`, newValue);
-                                        flashMessages.value.push(newValue);
-                                        setTimeout(() => {
-                                            flashMessages.value.shift();
-                                        }, 5000);
+                                        store.dispatch('actOnFlashMessage', { message: newValue });
+                                        // flashMessages.value.push(newValue);
+                                        // setTimeout(() => {
+                                        //     flashMessages.value.shift();
+                                        // }, 5000);
                                         break;
                                     case 'MESSAGE_TO_USER':
                                         //If the newValue.payload.from == me.username then it is a message from me to the selected user
-                                        console.log(`MESSAGE_TO_USER:`, newValue);
                                         if(selectedUser.value) {
                                             if (newValue.payload.from === store.getters.me.id && selectedUser.value.id === newValue.payload.to) {
                                                 selectedUser.value.messages.push(newValue.payload);
@@ -409,29 +416,29 @@
                                         }
                                         break;
                                     case 'MESSAGE_FROM_USER':
-                                        console.log(`MESSAGE_FROM_USER:`, newValue);
                                         if(selectedUser.value) {
                                             if (newValue.payload.from === selectedUser.value.id ) {
                                                 selectedUser.value.messages.push(newValue.payload);
                                             } else {
-                                                flashMessages.value.push(newValue);
                                                 
-                                                const newUserMessage = users.value.find(user => user.id === newValue.payload.from);
-                                                conversationsUnreadCount(newUserMessage);
+                                                store.dispatch('actOnFlashMessage', { message: newValue });
+                                                const messageFrom = store.getters.users.find(user => user.id === newValue.payload.from);
+                                                store.dispatch('fetchMessageUnreadCount', messageFrom.id);
                                                 
-                                                setTimeout(() => {
-                                                    flashMessages.value.shift();
-                                                }, 5000);
+                                                // flashMessages.value.push(newValue);
+                                                // setTimeout(() => {
+                                                //     flashMessages.value.shift();
+                                                // }, 5000);
                                             }
                                         } else {
-                                            flashMessages.value.push(newValue);
+                                            store.dispatch('actOnFlashMessage', { message: newValue });
+                                            const messageFrom = store.getters.users.find(user => user.id === newValue.payload.from);
+                                            store.dispatch('fetchMessageUnreadCount', messageFrom.id);
                                             
-                                            const newUserMessage = users.value.find(user => user.id === newValue.payload.from);
-                                            conversationsUnreadCount(newUserMessage);
-                                            
-                                            setTimeout(() => {
-                                                flashMessages.value.shift();
-                                            }, 5000);
+                                            // flashMessages.value.push(newValue);
+                                            // setTimeout(() => {
+                                            //     flashMessages.value.shift();
+                                            // }, 5000);
                                         }
                                         break;
                                     default:
@@ -450,7 +457,7 @@
                 });
 
                 return {
-                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, searchUserText, users, loading, flashMessages
+                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, searchUserText, loading
                 };
             },
             template: '#chat-template' 
@@ -460,7 +467,7 @@
             setup() {
                 const accessToken = localStorage.getItem('access_token');
                 if (accessToken) {
-                    store.dispatch('whoAmI');
+                    store.dispatch('fetchWhoAmI');
                     store.dispatch('login');
                 }
                 
@@ -493,7 +500,7 @@
                         .then(data => {
                             const accessToken = data.access_token;
                             localStorage.setItem('access_token', accessToken);
-                            store.dispatch('whoAmI');
+                            store.dispatch('fetchWhoAmI');
                             store.dispatch('login');
                             setInterval(() => {
                                 window.history.replaceState({}, document.title, "/");
@@ -542,7 +549,7 @@
                             // url.searchParams.set('code_challenge_method', 'S256')
                             // url.searchParams.set('code_challenge', codeChallenge)
                             setInterval(() => {
-                                //url.toString()
+                                //window.location.replace(url.toString());
                                 window.location.replace(`${oauth2AuthServerURI}/oauth2/authorize?response_type=code&client_id=public-client&scope=profile&code_challenge=${data.codeChallenge}&code_challenge_method=S256&redirect_uri=${redirectURI}`);
                             }, 1000);
                             
@@ -575,8 +582,6 @@
             { path: '/login', name: 'Login', component: Login },
             { path: '/logout', name: 'Logout', component: {
                 setup() {
-                    localStorage.removeItem('access_token');
-                    localStorage.removeItem('pkace');
                     store.dispatch('logout');
                     window.location.href = `${oauth2AuthServerURI}/logout`;
                 }
