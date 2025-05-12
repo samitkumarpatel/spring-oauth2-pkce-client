@@ -65,6 +65,14 @@
     <template id="chat-template">
         <div>
             <p v-if="e" style="color: red;">{{ e }}</p>
+            <p style="color: red;" v-if="!online">
+                You are Offline. Click
+                <button style="padding: 5px; cursor: pointer;" @click="refreshWebSocketConnection">
+                    &#x21bb;
+                </button>
+                to resume connection
+            </p>
+            
             <div v-if="$store.getters.flashMessages.length > 0" style="color: blue; border: 1px solid gray; border-radius: 5px; padding: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
                 <p v-for="(msg, index) in $store.getters.flashMessages" :key="index">
                     {{ msg.event }}: {{ msg.payload }}
@@ -302,6 +310,7 @@
                 const instantMessage = ref(null);
                 const searchUserText = ref('');
                 const loading = ref(false);
+                const online = ref(false);
 
                 const setSelecedUser = (user) => {
                     selectedUser.value = user;
@@ -313,7 +322,7 @@
                     const accessToken = localStorage.getItem('access_token');
                     stompClient.value.connect({'Authorization': 'Bearer ' + accessToken}, (frame) => {
                         console.log("Connected: " + frame);
-                        
+                        online.value = true;
                         stompClient.value.subscribe('/topic/public', (message) => {
                             instantMessage.value = JSON.parse(message.body);
                         });
@@ -331,6 +340,7 @@
                     socket.onclose = (event) => {
                         console.log(`Socket closed`, event);
                         stompClient.value = null;
+                        online.value = false;
                         store.dispatch('setError', { e: 'WebSocket connection closed' });
                     };
                 }
@@ -338,6 +348,12 @@
                 const sendMessage = () => {
                     stompClient.value.send("/app/chat/private", {}, JSON.stringify({message: msg.value, to: selectedUser.value.username}));
                     msg.value = '';
+                }
+
+                const refreshWebSocketConnection = () => {
+                    websocket();
+                    if (stompClient.value) online.value = true;
+                    else online.value = false;  
                 }
 
                 onMounted(() => {
@@ -457,7 +473,7 @@
                 });
 
                 return {
-                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, searchUserText, loading
+                    selectedUser, e, setSelecedUser, sendMessage, msg, instantMessage, searchUserText, loading, online, refreshWebSocketConnection
                 };
             },
             template: '#chat-template' 
